@@ -1,0 +1,266 @@
+data_path <- "C:/Users/bibly/OneDrive/Desktop/R SJU Practice/subscription_customers_raw.csv"  ### adjust if you're using a mac
+
+
+library(tidyverse)
+library(janitor)
+library(stringr)
+
+
+subscription_raw <- read_csv(data_path)
+
+
+head(subscription_raw)
+glimpse(subscription_raw)
+
+
+
+subscription <- subscription_raw %>%
+  clean_names()
+
+# Check new column names
+names(subscription)
+
+# ------------------------------------------------------------
+# 3) Explore categories and duplicates
+# ------------------------------------------------------------
+
+# Frequency tables for plan_type and region to spot typos/misspellings
+# TO-DO Use tabyl() for plan_type and region
+subscription %>% tabyl(plan_type)
+subscription %>% tabyl(region)
+
+# Duplicates: find any duplicate customer_id rows
+# TO-DO: Use get_dupes() from janitor on customer_id
+subscription_dupes <- subscription %>% get_dupes(customer_id)
+subscription_dupes
+
+# ------------------------------------------------------------
+# 4) Handle missing data and impossible values
+# ------------------------------------------------------------
+
+# View summary statistics to see missing values and strange values
+summary(subscription)
+
+# TOD0
+#  - Replace impossible ages (< 18 or > 100) with NA
+#  - Replace impossible monthly_spend (< 0 or > 1000) with NA
+#  - Impute missing age, monthly_spend, and satisfaction_score
+#    with the median of each column (ignoring NAs)
+#  - Remove rows with missing plan_type
+#  - Remove duplicate customer_id rows
+
+
+# ----------------------------------------------------------------
+# 1) Load data and initial inspection 
+# ----------------------------------------------------------------
+
+subscription_raw <- read_csv(data_path)
+
+# Explanation:
+#   head() shows the first few rows to give a sense of values.
+#   glimpse() shows column types and sample values.
+head(subscription_raw)
+glimpse(subscription_raw)
+
+# ----------------------------------------------------------------
+# 2) Clean column names
+# ----------------------------------------------------------------
+
+# Explanation:
+#   clean_names() standardizes variable names into snake_case.
+#   This makes later coding easier and reduces typos.
+subscription <- subscription_raw %>%
+  clean_names()
+
+names(subscription)
+# Note:
+#   "Customer ID"        -> customer_id
+#   "Age "               -> age
+#   "Plan Type"          -> plan_type
+#   "Region "            -> region
+#   "Monthly Spend ($)"  -> monthly_spend
+#   "Satisfaction Score" -> satisfaction_score
+#   "Churned?"           -> churned
+
+# ----------------------------------------------------------------
+# 3) Explore categories and duplicates
+# ----------------------------------------------------------------
+
+# Use tabyl() to quickly see value counts and proportions.
+subscription %>% tabyl(plan_type)
+subscription %>% tabyl(region)
+
+# Check duplicates based on customer_id
+subscription_dupes <- subscription %>% get_dupes(customer_id)
+subscription_dupes
+
+# ----------------------------------------------------------------
+# 4) Fixing category typos & standardizing labels
+# ----------------------------------------------------------------
+
+# Step 1: Standardize case and trim whitespace
+subscription_cleaned_step1 <- subscription %>%
+  mutate(
+    plan_type = str_trim(str_to_title(plan_type)),  # "basic" -> "Basic"
+    region    = str_trim(str_to_title(region))      # "south " -> "South"
+  )
+
+subscription_cleaned_step1 %>% tabyl(plan_type)
+subscription_cleaned_step1 %>% tabyl(region)
+
+# Step 2: Recode remaining typos to the correct labels
+subscription_cleaned_step1 <- subscription_cleaned_step1 %>%
+  mutate(
+    plan_type = recode(
+      plan_type,
+      "Std"       = "Standard",
+      "Prem"      = "Premium",
+      "Standard " = "Standard",
+      "Baisc"     = "Basic"
+      # Correct base labels ("Basic", "Standard", "Premium") stay as is
+    ),
+    region = recode(
+      region,
+      "Noth"  = "North",
+      "South " = "South",
+      "West"  = "West",
+      "West " = "West",
+      "East"  = "East"
+      # "North", "South", "East", "West" already correct
+    )
+  )
+
+subscription_cleaned_step1 %>% tabyl(plan_type)
+subscription_cleaned_step1 %>% tabyl(region)
+
+
+# ----------------------------------------------------------------
+# 5) Handling impossible values and outliers
+# ----------------------------------------------------------------
+
+summary(subscription_cleaned_step1)
+
+# We know from data generation that:
+#   - age may contain impossible values (e.g., -5, 150)
+#   - monthly_spend has impossible values like -50, 5000
+#   - We'll treat those as errors and convert them to NA for now.
+
+subscription_cleaned_step2 <- subscription_cleaned_step1 %>%
+  mutate(
+    age = if_else(age < 18 | age > 100, NA_real_, age),
+    monthly_spend = if_else(monthly_spend < 0 | monthly_spend > 1000,
+                            NA_real_, monthly_spend)
+  )
+
+summary(subscription_cleaned_step2)
+
+# Optional visualization for class:
+subscription_cleaned_step2 %>%
+  ggplot(aes(x = plan_type, y = monthly_spend)) +
+  geom_boxplot() +
+  labs(title = "Monthly Spend by Plan Type (after removing extreme values)")
+
+
+# ----------------------------------------------------------------
+# 6) Missing data overview and imputation
+# ----------------------------------------------------------------
+
+# Count missing values by column
+subscription_cleaned_step2 %>%
+  summarise(across(everything(), ~ sum(is.na(.))))
+
+# Strategy for this lesson:
+#   - drop rows with missing plan_type (for simplicity)
+#   - for age, monthly_spend, satisfaction_score: impute with median
+
+subscription_imputed <- subscription_cleaned_step2 %>%
+  filter(!is.na(plan_type)) %>%  # remove missing plan_type
+  mutate(
+    monthly_spend = if_else(
+      is.na(monthly_spend),
+      median(monthly_spend, na.rm = TRUE),
+      monthly_spend
+    ),
+    age = if_else(
+      is.na(age),
+      median(age, na.rm = TRUE),
+      age
+    ),
+    satisfaction_score = if_else(
+      is.na(satisfaction_score),
+      median(satisfaction_score, na.rm = TRUE),
+      satisfaction_score
+    )
+  )
+
+subscription_imputed %>%
+  summarise(across(everything(), ~ sum(is.na(.))))
+
+
+# ----------------------------------------------------------------
+# 7) Remove duplicate rows and finalize dataset
+# ----------------------------------------------------------------
+
+subscription_final <- subscription_imputed %>%
+  distinct(customer_id, .keep_all = TRUE)
+
+nrow(subscription_imputed)
+nrow(subscription_final)  # should be a few rows fewer after duplicates removed
+
+# ----------------------------------------------------------------
+# 8) Quick modeling demos – show why cleaning mattered
+# ----------------------------------------------------------------
+
+# 8a) ANOVA: Does monthly_spend differ by plan_type?
+anova_model <- aov(monthly_spend ~ plan_type, data = subscription_final)
+summary(anova_model)
+
+# 8b) Regression: Predict monthly_spend
+lm_model <- lm(
+  monthly_spend ~ age + tenure_months + plan_type + region,
+  data = subscription_final
+)
+summary(lm_model)
+
+# 8c) Cluster setup (high-level preview)
+cluster_data <- subscription_final %>%
+  select(monthly_spend, logins, tenure_months, satisfaction_score) %>%
+  scale()
+
+set.seed(123)
+km3 <- kmeans(cluster_data, centers = 3, nstart = 20)
+
+km3$size
+km3$centers
+
+
+######## Logistic Regression ###########
+# Simple logistic regression
+log_model1 <- glm(
+  churned ~ satisfaction_score + tenure_months,
+  data = subscription_final,
+  family = binomial()
+)
+
+summary(log_model1)
+
+
+# Full logistic regression with factors + numeric predictors
+log_model2 <- glm(
+  churned ~ age + tenure_months + monthly_spend +
+    satisfaction_score + support_tickets +
+    plan_type + region,
+  data = subscription_final,
+  family = binomial()
+)
+
+summary(log_model2)
+
+# Predicted probabilities for each customer
+subscription_final$pred_prob <- predict(log_model2, type = "response")
+
+head(subscription_final %>% select(customer_id, churned, pred_prob))
+
+subscription_final$pred_class <- ifelse(subscription_final$pred_prob > 0.5, 1, 0)
+
+table(subscription_final$churned, subscription_final$pred_class)
